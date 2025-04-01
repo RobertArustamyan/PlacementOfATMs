@@ -1,15 +1,20 @@
 class ATM:
-    def __init__(self, latitude, longitude, cost, capacityLimit):
+    def __init__(self, name, latitude, longitude, cost, capacityLimit):
+        self.__name = name
         self.__latitude = latitude
         self.__longitude = longitude
         self.__cost = cost
         self.__capacityLimit = capacityLimit
 
     def __repr__(self):
-        return f"ATM(latitude={self.__latitude}, longitude={self.__longitude}, cost={self.__cost}, capacityLimit={self.__capacityLimit})"
+        return f"ATM(name={self.__name}, latitude={self.__latitude}, longitude={self.__longitude}, cost={self.__cost}, capacityLimit={self.__capacityLimit})"
 
     def __str__(self):
-        return f"ATM is located at ({self.__latitude}, {self.__longitude}) and has a cost of {self.__cost} and a capacity limit of {self.__capacityLimit}."
+        return f"ATM {self.__name} is located at ({self.__latitude}, {self.__longitude}) and has a cost of {self.__cost} and a capacity limit of {self.__capacityLimit}."
+
+    @property
+    def name(self):
+        return self.__name
 
     @property
     def latitude(self):
@@ -26,6 +31,10 @@ class ATM:
     @property
     def capacityLimit(self):
         return self.__capacityLimit
+
+    @name.setter
+    def name(self, name):
+        self.__name = name
 
     @latitude.setter
     def latitude(self, latitude):

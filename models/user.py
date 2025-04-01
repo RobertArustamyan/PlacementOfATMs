@@ -15,7 +15,14 @@ class User:
         self.__longitude: float = longitude
         self.__maxDistance: float = maxDistance
 
-    def getLatitude(self) -> float:
+    def __repr__(self) -> str:
+        return f"User(latitude={self.__latitude}, longitude={self.__longitude}, maxDistance={self.__maxDistance})"
+
+    def __str__(self) -> str:
+        return f"User is at location ({self.__latitude}, {self.__longitude}) and wants to travel up to {self.__maxDistance} km."
+
+    @property
+    def latitude(self) -> float:
         """
         Get the latitude of the user.
 
@@ -23,7 +30,8 @@ class User:
         """
         return self.__latitude
 
-    def getLongitude(self) -> float:
+    @property
+    def longitude(self) -> float:
         """
         Get the longitude of the user.
 
@@ -31,31 +39,32 @@ class User:
         """
         return self.__longitude
 
-    def getMaxDistance(self) -> float:
+    @property
+    def maxDistance(self) -> float:
         """
         Get the maximum travel distance of the user.
 
         :return: The max distance in kilometers.
         """
         return self.__maxDistance
-
-    def setLatitude(self, latitude: float) -> None:
+    @latitude.setter
+    def latitude(self, latitude: float) -> None:
         """
         Set the latitude of the user.
 
         :param latitude: The new latitude value.
         """
         self.__latitude = latitude
-
-    def setLongitude(self, longitude: float) -> None:
+    @longitude.setter
+    def longitude(self, longitude: float) -> None:
         """
         Set the longitude of the user.
 
         :param longitude: The new longitude value.
         """
         self.__longitude = longitude
-
-    def setMaxDistance(self, maxDistance: float) -> None:
+    @maxDistance.setter
+    def maxDistance(self, maxDistance: float) -> None:
         """
         Set the maximum travel distance for the user.
 

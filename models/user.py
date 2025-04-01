@@ -81,5 +81,5 @@ class User:
         """
         return haversine(
             self.__latitude, self.__longitude,
-            atm.getLatitude(), atm.getLongitude()
+            atm.latitude, atm.longitude
         ) <= self.__maxDistance

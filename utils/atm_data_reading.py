@@ -1,5 +1,3 @@
-from pandas.core.base import NoNewAttributesMixin
-
 from models.atm import ATM
 from typing import List
 import os
@@ -30,8 +28,8 @@ def get_atm_data(path: str) -> List[ATM]:
         for ind,row in enumerate(reader):
             ATMs.append(ATM(
                 name=row[1],
-                latitude=float(row[0].split('(')[1].split(' ')[0]),
-                longitude=float(row[0].split('(')[1].split(' ')[1][:-1]),
+                latitude=float(row[0].split('(')[1].split(' ')[1][:-1]),
+                longitude=float(row[0].split('(')[1].split(' ')[0]),
                 cost=None,
                 capacityLimit=None
             ))

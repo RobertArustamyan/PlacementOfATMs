@@ -3,6 +3,9 @@ from models.user import User
 from utils.users_living_quadrilateral_reading import get_living_quadrilateral_data
 from typing import List, Tuple
 import random
+from utils.ordering import order_points
+import os
+from dotenv import load_dotenv
 
 
 def generate_users_in_triangle(coordinates: List[Tuple[float, float]]) -> User:
@@ -29,17 +32,14 @@ def generate_users_in_quadrilateral(quadrilateral_coordinates: List[Tuple[float,
         users.append(generate_users_in_triangle([ordered_points[0], ordered_points[2], ordered_points[3]]))
     return users
 
-def order_points(coordinates):
-    Cx = sum(coordinate[0] for coordinate in coordinates) / 4
-    Cy = sum(coordinate[1] for coordinate in coordinates) / 4
 
-    points = coordinates.copy()
-    points.sort(key=lambda p: math.atan2(p[1] - Cy, p[0] - Cx))
-    return points
 
 if __name__ == '__main__':
-    data = get_living_quadrilateral_data(
-        "C:/Users/User/PycharmProjects/PlacementOfATMs/ATMsData/LeobenUserLivingSquares.csv")
+    load_dotenv()
+
+    test_data_name = 'LeobenUserLivingSquares.csv'
+    data = get_living_quadrilateral_data(fr"{os.getenv('USERS_DATA_PATH')}\{test_data_name}")
+
     # print(generate_users_in_quadrilateral(data[1],10))
     # print(order_points(data[1]))
     print(generate_users_in_quadrilateral(data[1], 1000))

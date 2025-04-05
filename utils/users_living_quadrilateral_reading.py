@@ -2,6 +2,9 @@ from typing import Dict, List, Tuple, Optional
 import os
 import csv
 import re
+from utils.ordering import order_points
+from dotenv import load_dotenv
+
 
 def get_point_data(point_str: str) -> Optional[Tuple[float, float]]:
     """
@@ -19,6 +22,7 @@ def get_point_data(point_str: str) -> Optional[Tuple[float, float]]:
     if match:
         return float(match.group(2)), float(match.group(1))
     return None
+
 
 def get_living_quadrilateral_data(path: str) -> Dict[int, List[Tuple[float, float]]]:
     """
@@ -56,6 +60,11 @@ def get_living_quadrilateral_data(path: str) -> Dict[int, List[Tuple[float, floa
 
     return quadrilateral_coordinates
 
+
 if __name__ == "__main__":
-    data = get_living_quadrilateral_data("C:/Users/User/PycharmProjects/PlacementOfATMs/ATMsData/LeobenUserLivingSquares.csv")
+    load_dotenv()
+
+    test_data_name = 'LeobenUserLivingSquares2.csv'
+    data = get_living_quadrilateral_data(fr"{os.getenv('USERS_DATA_PATH')}\{test_data_name}")
+
     print(data)

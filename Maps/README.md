@@ -14,6 +14,13 @@ This folder contains Jupyter notebooks related to map visualization for the ATM 
 3. The output is displayed in jupyter notebook.
 
 ## Images
+Below are sample images generated from the notebooks:
+
+**ATM Locations:** ![ATMs map](images/ATMs.PNG)
+
+**Users living bounds:** ![Users bounds map](images/Bounds.PNG)
+
+**Generated Users:** ![Generated users map](images/GeneratedUSers.PNG)
 
 
 ---

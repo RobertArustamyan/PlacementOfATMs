@@ -2,7 +2,7 @@ from models.atm import ATM
 from typing import List
 import os
 import csv
-
+from dotenv import load_dotenv
 
 def get_atm_data(path: str) -> List[ATM]:
     """
@@ -36,4 +36,7 @@ def get_atm_data(path: str) -> List[ATM]:
     return ATMs
 
 if __name__ == "__main__":
-    print(get_atm_data("C:/Users/User/PycharmProjects/PlacementOfATMs/ATMsData/Leoben-73ATMsTEST.csv"))
+    load_dotenv()
+
+    test_data_name = 'Leoben-73ATMsTEST.csv'
+    print(get_atm_data(fr"{os.getenv('ATMS_DATA_PATH')}\{test_data_name}"))

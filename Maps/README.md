@@ -20,7 +20,7 @@ Below are sample images generated from the notebooks:
 
 **Users living bounds:** ![Users bounds map](images/Bounds.PNG)
 
-**Generated Users:** ![Generated users map](images/GeneratedUSers.PNG)
+**Generated Users:** ![Generated users map](images/GeneratedUsers.PNG)
 
 
 ---

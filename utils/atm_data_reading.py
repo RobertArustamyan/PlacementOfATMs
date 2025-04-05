@@ -4,6 +4,7 @@ import os
 import csv
 from dotenv import load_dotenv
 
+
 def get_atm_data(path: str) -> List[ATM]:
     """
     Fetches and parses ATM data from the specified file path.
@@ -25,7 +26,7 @@ def get_atm_data(path: str) -> List[ATM]:
     with open(path, newline='') as csvfile:
         reader = csv.reader(csvfile, delimiter=',')
         next(reader)
-        for ind,row in enumerate(reader):
+        for ind, row in enumerate(reader):
             ATMs.append(ATM(
                 name=row[1],
                 latitude=float(row[0].split('(')[1].split(' ')[1][:-1]),
@@ -34,6 +35,7 @@ def get_atm_data(path: str) -> List[ATM]:
                 capacityLimit=None
             ))
     return ATMs
+
 
 if __name__ == "__main__":
     load_dotenv()

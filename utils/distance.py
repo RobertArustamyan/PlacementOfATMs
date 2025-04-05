@@ -21,6 +21,7 @@ def haversine(latitude1, longitude1, latitude2, longitude2):
     distance_km = EARTH_RADIUS_KM * c
     return distance_km  # Returns the distance in kilometers
 
+
 # Testing haversine
 if __name__ == '__main__':
     leoben_latitude = 47.3827417

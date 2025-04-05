@@ -16,11 +16,17 @@ This folder contains Jupyter notebooks related to map visualization for the ATM 
 ## Images
 Below are sample images generated from the notebooks:
 
-**ATM Locations:** ![ATMs map](images/ATMs.PNG)
+**ATM Locations:** 
 
-**Users living bounds:** ![Users bounds map](images/Bounds.PNG)
+![ATMs map](images/ATMs.PNG)
 
-**Generated Users:** ![Generated users map](images/GeneratedUsers.PNG)
+**Users living bounds:** 
+
+![Users bounds map](images/Bounds.PNG)
+
+**Generated Users:** 
+
+![Generated users map](images/GeneratedUsers.PNG)
 
 
 ---

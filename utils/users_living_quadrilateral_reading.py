@@ -64,7 +64,7 @@ def get_living_quadrilateral_data(path: str) -> Dict[int, List[Tuple[float, floa
 if __name__ == "__main__":
     load_dotenv()
 
-    test_data_name = 'LeobenUserLivingSquares2.csv'
+    test_data_name = 'LeobenUserLivingSquares2Test.csv'
     data = get_living_quadrilateral_data(fr"{os.getenv('USERS_DATA_PATH')}\{test_data_name}")
 
     print(data)

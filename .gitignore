@@ -1,2 +1,4 @@
 .idea
 .venv
+CSPData/*
+!CSPData/scp41.txt

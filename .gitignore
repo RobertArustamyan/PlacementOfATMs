@@ -1,4 +1,5 @@
 .idea
 .venv
-CSPData/*
-!CSPData/scp41.txt
+SCPData/*
+!SCPData/scp41.txt
+test.py

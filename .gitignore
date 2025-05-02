@@ -3,3 +3,5 @@
 SCPData/*
 !SCPData/scp41.txt
 test.py
+logs
+lp_models

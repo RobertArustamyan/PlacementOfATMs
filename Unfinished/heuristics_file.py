@@ -696,34 +696,485 @@ class BoundingHeuristics:
         self.atm_list = atm_list
         self.user_coverage = user_coverage
         self.atm_dict = {atm.id: atm for atm in atm_list}
-    
+
     def lagrangian_bound(self, multipliers=None, max_iterations=50) -> float:
         """Compute Lagrangian lower bound"""
         if multipliers is None:
             multipliers = {user_id: 1.0 for user_id in self.user_coverage.keys()}
-        
+
         # Subgradient optimization for Lagrangian dual
         best_bound = float('-inf')
         step_size = 2.0
-        
+
         for iteration in range(max_iterations):
             # Solve Lagrangian subproblem
             current_bound = 0
             solution = {}
-            
+
             for atm in self.atm_list:
                 # Calculate reduced cost
                 reduced_cost = atm.cost
                 for user_id in atm.covered_users_ids:
                     reduced_cost -= multipliers.get(user_id, 0)
-                
+
                 # Set variable value
                 if reduced_cost < 0:
                     solution[atm.id] = 1
                     current_bound += reduced_cost
                 else:
                     solution[atm.id] = 0
-            
-            # Add constraint violations
+
+            # Add constraint violations (dual feasibility)
             for user_id in self.user_coverage.keys():
-                coverage = sum(solution.get(
+                coverage = sum(solution.get(atm_id, 0) for atm_id in self.user_coverage[user_id])
+                if coverage >= 1:
+                    current_bound += multipliers[user_id]
+                else:
+                    # Constraint is violated, penalize bound
+                    current_bound += multipliers[user_id] * coverage
+
+            # Update best bound
+            if current_bound > best_bound:
+                best_bound = current_bound
+
+            # Compute subgradient
+            subgradient = {}
+            for user_id in self.user_coverage.keys():
+                coverage = sum(solution.get(atm_id, 0) for atm_id in self.user_coverage[user_id])
+                subgradient[user_id] = coverage - 1  # g_i = sum(a_ij * x_j) - 1
+
+            # Check for optimality (subgradient close to zero)
+            subgrad_norm = sum(g ** 2 for g in subgradient.values()) ** 0.5
+            if subgrad_norm < 1e-6:
+                break
+
+            # Update multipliers using subgradient method
+            # Step size adjustment for better convergence
+            if iteration > 0 and iteration % 10 == 0:
+                step_size *= 0.7  # Reduce step size over time
+
+            for user_id in self.user_coverage.keys():
+                multipliers[user_id] = max(0.0,
+                                           multipliers[user_id] + step_size * subgradient[user_id] / subgrad_norm)
+
+        return best_bound
+
+    def linear_relaxation_bound(self, fixed_vars=None) -> Tuple[float, Dict[int, float]]:
+        """Compute LP relaxation bound (simplified without Gurobi)"""
+        if fixed_vars is None:
+            fixed_vars = {}
+
+        # Simple greedy fractional solution for bound estimation
+        # This is a heuristic approximation of the LP bound
+        remaining_users = set(self.user_coverage.keys())
+        fractional_solution = {atm.id: 0.0 for atm in self.atm_list}
+        total_cost = 0.0
+
+        # Apply fixed variables
+        for atm_id, value in fixed_vars.items():
+            if value == 1:
+                fractional_solution[atm_id] = 1.0
+                atm = self.atm_dict[atm_id]
+                total_cost += atm.cost
+                remaining_users -= set(atm.covered_users_ids)
+            elif value == 0:
+                fractional_solution[atm_id] = 0.0
+
+        # Greedy fractional assignment for remaining coverage
+        iteration = 0
+        while remaining_users and iteration < 100:
+            iteration += 1
+            best_ratio = 0
+            best_atm = None
+
+            for atm in self.atm_list:
+                if fractional_solution[atm.id] >= 1.0:
+                    continue
+
+                # Calculate marginal coverage
+                marginal_coverage = len(remaining_users.intersection(atm.covered_users_ids))
+                if marginal_coverage == 0:
+                    continue
+
+                ratio = marginal_coverage / atm.cost
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_atm = atm
+
+            if best_atm is None:
+                break
+
+            # Determine fractional value needed
+            covered_users = set(best_atm.covered_users_ids).intersection(remaining_users)
+            if covered_users:
+                # Use minimum fractional value needed to cover at least one user
+                fraction_needed = 1.0 / len(covered_users) if len(covered_users) > 1 else 1.0
+                fraction_to_add = min(1.0 - fractional_solution[best_atm.id], fraction_needed)
+
+                fractional_solution[best_atm.id] += fraction_to_add
+                total_cost += best_atm.cost * fraction_to_add
+
+                # Remove some users (proportional to fraction added)
+                users_to_remove = list(covered_users)[:max(1, int(len(covered_users) * fraction_to_add))]
+                remaining_users -= set(users_to_remove)
+
+        return total_cost, fractional_solution
+
+    def compute_lower_bound(self, method='lagrangian', **kwargs) -> float:
+        """Unified interface for computing lower bounds"""
+        if method == 'lagrangian':
+            return self.lagrangian_bound(**kwargs)
+        elif method == 'linear_relaxation':
+            bound, _ = self.linear_relaxation_bound(**kwargs)
+            return bound
+        else:
+            raise ValueError(f"Unknown bounding method: {method}")
+
+    def pricing_heuristic(self, current_solution: Dict[int, int], dual_values: Dict[int, float] = None) -> List[int]:
+        """Identify ATMs with negative reduced costs (good candidates to add)"""
+        if dual_values is None:
+            # Estimate dual values based on coverage gaps
+            dual_values = {}
+            covered_users = set()
+            for atm_id, val in current_solution.items():
+                if val == 1:
+                    covered_users.update(self.atm_dict[atm_id].covered_users_ids)
+
+            # Higher dual values for uncovered users
+            for user_id in self.user_coverage.keys():
+                dual_values[user_id] = 2.0 if user_id not in covered_users else 0.1
+
+        candidates = []
+        for atm in self.atm_list:
+            if current_solution.get(atm.id, 0) == 1:
+                continue
+
+            # Calculate reduced cost
+            reduced_cost = atm.cost
+            for user_id in atm.covered_users_ids:
+                reduced_cost -= dual_values.get(user_id, 0)
+
+            if reduced_cost < -0.01:  # Negative reduced cost threshold
+                candidates.append((atm.id, -reduced_cost))  # Store as positive improvement
+
+        # Sort by improvement potential
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return [atm_id for atm_id, _ in candidates[:5]]  # Return top 5 candidates
+
+
+class AdaptiveManager:
+    """Manages adaptive heuristic selection and execution strategies"""
+
+    def __init__(self, atm_list, user_coverage, time_budget=300):
+        self.atm_list = atm_list
+        self.user_coverage = user_coverage
+        self.time_budget = time_budget
+
+        # Initialize components
+        self.analyzer = ProblemAnalyzer(atm_list, user_coverage)
+        self.constructive = ConstructiveHeuristics(atm_list, user_coverage)
+        self.local_search = LocalSearchHeuristics(atm_list, user_coverage)
+        self.meta_heuristics = MetaHeuristics(atm_list, user_coverage)
+        self.bounding = BoundingHeuristics(atm_list, user_coverage)
+
+        # Performance tracking
+        self.method_performance = defaultdict(list)  # Track performance of each method
+        self.solution_history = []
+        self.current_best = None
+
+        # Strategy state
+        self.phase = 1
+        self.last_improvement_time = 0
+        self.stagnation_count = 0
+        self.diversification_triggered = False
+
+        # Timing allocations (as fractions of total budget)
+        self.phase_allocations = {
+            1: 0.15,  # Quick heuristic burst: 15%
+            2: 0.70,  # Main B&B with periodic improvements: 70%
+            3: 0.15  # Final intensification: 15%
+        }
+
+    def get_phase_time_budget(self, phase: int) -> float:
+        """Get time budget for specific phase"""
+        return self.time_budget * self.phase_allocations[phase]
+
+    def phase1_quick_heuristics(self) -> List[HeuristicSolution]:
+        """Phase 1: Quick heuristic burst to find good initial solutions"""
+        start_time = time.time()
+        phase_budget = self.get_phase_time_budget(1)
+        solutions = []
+
+        print(f"Phase 1: Quick heuristic burst ({phase_budget:.1f}s budget)")
+
+        # 1. Fast constructive heuristics
+        methods_to_try = [
+            ('greedy_cost_effectiveness', self.constructive.greedy_cost_effectiveness),
+            ('greedy_max_coverage', self.constructive.greedy_max_coverage),
+            ('greedy_min_cost', self.constructive.greedy_min_cost)
+        ]
+
+        for method_name, method in methods_to_try:
+            if time.time() - start_time > phase_budget * 0.4:
+                break
+
+            try:
+                sol = method()
+                solutions.append(sol)
+                self._update_performance_tracking(method_name, sol)
+                print(f"  {method_name}: cost={sol.cost:.1f}, time={sol.time_taken:.3f}s")
+            except Exception as e:
+                print(f"  {method_name} failed: {e}")
+
+        # 2. Randomized greedy with multiple runs
+        remaining_time = phase_budget * 0.4 - (time.time() - start_time)
+        if remaining_time > 1.0:
+            iterations = max(3, int(remaining_time / 0.5))  # ~0.5s per iteration
+            try:
+                sol = self.constructive.randomized_greedy(alpha=0.3, iterations=iterations)
+                solutions.append(sol)
+                self._update_performance_tracking('randomized_greedy', sol)
+                print(f"  randomized_greedy: cost={sol.cost:.1f}, time={sol.time_taken:.3f}s")
+            except Exception as e:
+                print(f"  randomized_greedy failed: {e}")
+
+        # 3. Quick local search on best solution so far
+        if solutions:
+            best_so_far = min(solutions, key=lambda x: x.cost)
+            remaining_time = phase_budget - (time.time() - start_time)
+
+            if remaining_time > 2.0:
+                try:
+                    improved = self.local_search.local_search_swap(best_so_far, max_iterations=50)
+                    solutions.append(improved)
+                    self._update_performance_tracking('local_search_swap', improved)
+                    print(f"  local_search_swap: cost={improved.cost:.1f}, time={improved.time_taken:.3f}s")
+                except Exception as e:
+                    print(f"  local_search_swap failed: {e}")
+
+        # Update current best
+        if solutions:
+            self.current_best = min(solutions, key=lambda x: x.cost)
+            self.last_improvement_time = time.time()
+            print(f"Phase 1 best: {self.current_best.cost:.1f} (method: {self.current_best.method})")
+
+        return solutions
+
+    def get_branching_guidance(self, fractional_vars: List[Tuple[int, float]],
+                               current_bound: float) -> Tuple[int, str]:
+        """Provide guidance for variable selection in branch-and-bound"""
+
+        # Strategy 1: Most fractional (default)
+        most_fractional = min(fractional_vars, key=lambda x: abs(0.5 - x[1]))
+
+        # Strategy 2: Reduced cost based (if we have dual information)
+        if hasattr(self, '_last_dual_values'):
+            try:
+                # Calculate reduced costs
+                reduced_costs = []
+                for var_id, frac_val in fractional_vars:
+                    atm = next(atm for atm in self.atm_list if atm.id == var_id)
+                    reduced_cost = atm.cost
+                    for user_id in atm.covered_users_ids:
+                        reduced_cost -= self._last_dual_values.get(user_id, 0)
+                    reduced_costs.append((var_id, frac_val, abs(reduced_cost)))
+
+                # Branch on variable with highest reduced cost magnitude
+                best_reduced_cost = max(reduced_costs, key=lambda x: x[2])
+                if best_reduced_cost[2] > 0.01:  # Significant reduced cost
+                    return best_reduced_cost[0], "reduced_cost"
+            except:
+                pass  # Fall back to most fractional
+
+        # Strategy 3: Coverage-based priority
+        if len(fractional_vars) > 3:
+            # Prioritize variables covering many uncovered users
+            coverage_scores = []
+            for var_id, frac_val in fractional_vars:
+                atm = next(atm for atm in self.atm_list if atm.id == var_id)
+                # Estimate uncovered users this ATM could help with
+                coverage_score = len(atm.covered_users_ids) * (1 - abs(2 * frac_val - 1))
+                coverage_scores.append((var_id, coverage_score))
+
+            best_coverage = max(coverage_scores, key=lambda x: x[1])
+            return best_coverage[0], "coverage_based"
+
+        return most_fractional[0], "most_fractional"
+
+    def should_call_heuristic_improvement(self, nodes_since_last: int,
+                                          time_since_start: float,
+                                          current_gap: float = None) -> bool:
+        """Decide when to call heuristic improvement during B&B"""
+
+        # Don't improve too frequently (computational overhead)
+        if nodes_since_last < 50:
+            return False
+
+        # Time-based triggers
+        if time_since_start > self.get_phase_time_budget(1):  # After phase 1
+            # Call every 100 nodes or every 30 seconds
+            if nodes_since_last >= 100 or time_since_start - self.last_improvement_time > 30:
+                return True
+
+        # Gap-based trigger (if gap information available)
+        if current_gap is not None and current_gap < 0.05:  # Gap < 5%
+            # More frequent improvements when close to optimal
+            return nodes_since_last >= 25
+
+        # Stagnation trigger
+        if time_since_start - self.last_improvement_time > 60:  # No improvement for 1 minute
+            self.stagnation_count += 1
+            return True
+
+        return False
+
+    def periodic_heuristic_improvement(self, current_incumbent: HeuristicSolution,
+                                       time_budget: float = 5.0) -> Optional[HeuristicSolution]:
+        """Run heuristic improvement during B&B phase"""
+        start_time = time.time()
+
+        if current_incumbent is None:
+            return None
+
+        # Select improvement method based on performance history and time available
+        if time_budget >= 8.0:
+            # Long time budget: try metaheuristic
+            methods = [
+                ('variable_neighborhood_search',
+                 lambda: self.local_search.variable_neighborhood_search(current_incumbent, time_budget - 1)),
+                ('simulated_annealing',
+                 lambda: self.meta_heuristics.simulated_annealing(current_incumbent, time_budget - 1))
+            ]
+        else:
+            # Short time budget: quick local search
+            methods = [
+                ('local_search_drop_add',
+                 lambda: self.local_search.local_search_drop_add(current_incumbent, max_iterations=30)),
+                ('local_search_swap',
+                 lambda: self.local_search.local_search_swap(current_incumbent, max_iterations=50))
+            ]
+
+        best_improvement = None
+
+        for method_name, method_func in methods:
+            if time.time() - start_time > time_budget * 0.9:
+                break
+
+            try:
+                improved_sol = method_func()
+                if improved_sol.cost < current_incumbent.cost:
+                    if best_improvement is None or improved_sol.cost < best_improvement.cost:
+                        best_improvement = improved_sol
+                        self.last_improvement_time = time.time()
+                        print(f"  Heuristic improvement: {improved_sol.cost:.1f} via {method_name}")
+
+                self._update_performance_tracking(method_name, improved_sol)
+
+            except Exception as e:
+                print(f"  Heuristic {method_name} failed: {e}")
+
+        return best_improvement
+
+    def phase3_final_intensification(self, current_best: HeuristicSolution) -> HeuristicSolution:
+        """Phase 3: Final intensification with remaining time"""
+        start_time = time.time()
+        phase_budget = self.get_phase_time_budget(3)
+
+        print(f"Phase 3: Final intensification ({phase_budget:.1f}s budget)")
+
+        if current_best is None:
+            return current_best
+
+        best_solution = current_best
+
+        # 1. Intensive local search
+        if phase_budget > 5.0:
+            try:
+                vns_solution = self.local_search.variable_neighborhood_search(
+                    best_solution, time_limit=min(phase_budget * 0.4, 10.0))
+                if vns_solution.cost < best_solution.cost:
+                    best_solution = vns_solution
+                    print(f"  VNS improvement: {vns_solution.cost:.1f}")
+            except Exception as e:
+                print(f"  VNS failed: {e}")
+
+        # 2. Genetic algorithm for diversification
+        remaining_time = phase_budget - (time.time() - start_time)
+        if remaining_time > 8.0:
+            try:
+                ga_solution = self.meta_heuristics.genetic_algorithm(
+                    time_limit=min(remaining_time * 0.6, 15.0))
+                if ga_solution.cost < best_solution.cost:
+                    best_solution = ga_solution
+                    print(f"  GA improvement: {ga_solution.cost:.1f}")
+            except Exception as e:
+                print(f"  GA failed: {e}")
+
+        # 3. Final local search on best found
+        remaining_time = phase_budget - (time.time() - start_time)
+        if remaining_time > 2.0 and best_solution != current_best:
+            try:
+                final_ls = self.local_search.local_search_swap(
+                    best_solution, max_iterations=100)
+                if final_ls.cost < best_solution.cost:
+                    best_solution = final_ls
+                    print(f"  Final LS improvement: {final_ls.cost:.1f}")
+            except Exception as e:
+                print(f"  Final LS failed: {e}")
+
+        return best_solution
+
+    def get_bound_computation_strategy(self, node_depth: int, time_remaining: float) -> str:
+        """Choose bounding strategy based on context"""
+
+        # Early in search: use fast bounds
+        if node_depth <= 3 or time_remaining < 60:
+            return 'linear_relaxation'
+
+        # Later in search with sufficient time: use better bounds
+        if time_remaining > 120 and node_depth <= 10:
+            return 'lagrangian'
+
+        # Default
+        return 'linear_relaxation'
+
+    def _update_performance_tracking(self, method_name: str, solution: HeuristicSolution):
+        """Track performance of different methods"""
+        self.method_performance[method_name].append({
+            'cost': solution.cost,
+            'time': solution.time_taken,
+            'cost_per_time': solution.cost / max(solution.time_taken, 0.001)
+        })
+
+        # Keep only recent history (last 10 runs per method)
+        if len(self.method_performance[method_name]) > 10:
+            self.method_performance[method_name] = self.method_performance[method_name][-10:]
+
+    def get_performance_summary(self) -> Dict:
+        """Get summary of method performances"""
+        summary = {}
+        for method, performances in self.method_performance.items():
+            if performances:
+                costs = [p['cost'] for p in performances]
+                times = [p['time'] for p in performances]
+                summary[method] = {
+                    'avg_cost': np.mean(costs),
+                    'best_cost': min(costs),
+                    'avg_time': np.mean(times),
+                    'runs': len(performances)
+                }
+        return summary
+
+    def should_terminate_early(self, current_gap: float, time_elapsed: float) -> bool:
+        """Decide if we should terminate B&B early"""
+
+        # Gap-based termination
+        if current_gap is not None and current_gap < 0.001:  # 0.1% gap
+            return True
+
+        # Time-based with stagnation
+        if time_elapsed > self.time_budget * 0.8:  # 80% of time used
+            if time_elapsed - self.last_improvement_time > self.time_budget * 0.2:  # No improvement in 20% of budget
+                return True
+
+        return False

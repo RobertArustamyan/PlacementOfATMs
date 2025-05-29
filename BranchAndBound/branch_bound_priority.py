@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
 from gurobipy import Env, Model, GRB, LinExpr
 from utils.scp_data_reading import read_scp_raw_data, convert_scp_data_to_objects
+from algorithms.heuristics_file import AdaptiveManager, HeuristicSolution, ConstructiveHeuristics, \
+    LocalSearchHeuristics, BoundingHeuristics
 
 
 class SearchStrategy(Enum):
@@ -16,6 +18,14 @@ class SearchStrategy(Enum):
     BEST_BOUND = "best_bound"
     HYBRID_DF_BF = "hybrid_df_bf"
     MOST_FRACTIONAL = "most_fractional"
+
+
+class HeuristicStrategy(Enum):
+    NONE = "none"
+    BASIC = "basic"  # Just constructive heuristics
+    INTERMEDIATE = "intermediate"  # Constructive + local search
+    ADVANCED = "advanced"  # Full adaptive manager
+    CUSTOM = "custom"  # Custom heuristic selection
 
 
 @dataclass
@@ -34,11 +44,13 @@ class Node:
 
 
 class Result:
-    def __init__(self, oV=None, variables=None, time_taken=None, nodes_explored=None):
+    def __init__(self, oV=None, variables=None, time_taken=None, nodes_explored=None,
+                 heuristic_info=None):
         self._oV = oV if oV is not None else float('+inf')
         self._variables = variables if variables is not None else {}
         self._time_taken = time_taken
         self._nodes_explored = nodes_explored
+        self._heuristic_info = heuristic_info or {}
 
     def getOV(self):
         return self._oV
@@ -52,18 +64,24 @@ class Result:
     def getNodesExplored(self):
         return self._nodes_explored
 
+    def getHeuristicInfo(self):
+        return self._heuristic_info
+
 
 class BranchAndBoundSCPPriority:
     GAP_TOLERANCE = 1e-10
 
-    def __init__(self, filename, strategy=SearchStrategy.DEPTH_FIRST, modelNo=0):
+    def __init__(self, filename, strategy=SearchStrategy.DEPTH_FIRST,
+                 heuristic_strategy=HeuristicStrategy.NONE, modelNo=0):
         self.modelNo = modelNo
         self.filename = filename
         self.strategy = strategy
+        self.heuristic_strategy = heuristic_strategy
 
         # Initialize Gurobi environment
         basename = os.path.splitext(os.path.basename(filename))[0]
-        log_file_path = os.getenv("LOG_FOLDER_PATH", ".") + f"/BranchAndBound_{strategy.value}_{basename}.log"
+        log_file_path = os.getenv("LOG_FOLDER_PATH",
+                                  ".") + f"/BranchAndBound_{strategy.value}_{heuristic_strategy.value}_{basename}.log"
 
         self.env = Env(empty=True)
         self.env.setParam("LogFile", log_file_path)
@@ -85,12 +103,87 @@ class BranchAndBoundSCPPriority:
         self.initial_solutions_found = 0
         self.max_initial_solutions = 3
 
+        # Heuristic components
+        self.adaptive_manager = None
+        self.constructive_heuristics = None
+        self.local_search_heuristics = None
+        self.bounding_heuristics = None
+
+        # Heuristic tracking
+        self.nodes_since_last_heuristic = 0
+        self.last_heuristic_time = 0
+        self.heuristic_solutions = []
+        self.heuristic_calls = 0
+        self.heuristic_improvements = 0
+        self.total_heuristic_time = 0
+
+        # Performance tracking
+        self.heuristic_performance = {
+            'initial_phase': {},
+            'periodic_improvements': {},
+            'final_phase': {},
+            'method_calls': {},
+            'best_methods': []
+        }
+
+    def _initialize_heuristics(self, time_budget=300):
+        """Initialize heuristic components based on strategy"""
+        if self.heuristic_strategy == HeuristicStrategy.NONE:
+            return
+
+        print(f"Initializing heuristics with strategy: {self.heuristic_strategy.value}")
+
+        # Adjust time budget allocation for speed
+        time_allocations = {
+            'initial': 0.10,  # 10% for initial heuristics
+            'main': 0.80,  # 80% for main B&B
+            'final': 0.10  # 10% for final intensification
+        }
+
+        if self.heuristic_strategy == HeuristicStrategy.BASIC:
+            # Only constructive heuristics
+            self.constructive_heuristics = ConstructiveHeuristics(self.atm_list, self.user_coverage)
+
+        elif self.heuristic_strategy == HeuristicStrategy.INTERMEDIATE:
+            # Constructive + local search
+            self.constructive_heuristics = ConstructiveHeuristics(self.atm_list, self.user_coverage)
+            self.local_search_heuristics = LocalSearchHeuristics(self.atm_list, self.user_coverage)
+            self.bounding_heuristics = BoundingHeuristics(self.atm_list, self.user_coverage)
+
+        elif self.heuristic_strategy == HeuristicStrategy.ADVANCED:
+            # Full adaptive manager
+            self.adaptive_manager = AdaptiveManager(
+                self.atm_list,
+                self.user_coverage,
+                time_budget=time_budget
+            )
+            # Update time allocations in the adaptive manager
+            self.adaptive_manager.phase_allocations = time_allocations
+
+        elif self.heuristic_strategy == HeuristicStrategy.CUSTOM:
+            # Custom selection - initialize all for flexibility
+            self.constructive_heuristics = ConstructiveHeuristics(self.atm_list, self.user_coverage)
+            self.local_search_heuristics = LocalSearchHeuristics(self.atm_list, self.user_coverage)
+            self.bounding_heuristics = BoundingHeuristics(self.atm_list, self.user_coverage)
+
     def solve(self, use_heuristic=True, time_limit=300):
         """Main solve method with configurable strategy"""
         start_time = time.time()
 
-        if use_heuristic:
-            self.greedy_heuristic()
+        # Initialize heuristics if requested
+        if use_heuristic and self.heuristic_strategy != HeuristicStrategy.NONE:
+            self._initialize_heuristics(time_limit)
+
+            # Phase 1: Initial heuristic burst
+            initial_phase_time = time_limit * 0.10
+            initial_solutions = self._run_initial_heuristics(initial_phase_time)
+
+            if initial_solutions:
+                best_initial = min(initial_solutions, key=lambda x: x.cost)
+                if best_initial.cost < self.best_solution_value:
+                    self.best_solution_value = best_initial.cost
+                    self.best_solution = best_initial.solution
+                    print(f"Initial heuristic found solution with cost: {best_initial.cost}")
 
         # Initialize root node
         root = Node(
@@ -103,11 +196,12 @@ class BranchAndBoundSCPPriority:
 
         # Priority queue for nodes
         if self.strategy == SearchStrategy.DEPTH_FIRST:
-            # Use stack (LIFO) for depth-first
             node_queue = [root]
         else:
-            # Use priority queue for other strategies
             node_queue = [root]
+
+        # Main B&B loop
+        bb_start_time = time.time()
 
         while node_queue and (time.time() - start_time) < time_limit:
             # Get next node based on strategy
@@ -116,6 +210,12 @@ class BranchAndBoundSCPPriority:
                 break
 
             self.nodes_explored += 1
+            self.nodes_since_last_heuristic += 1
+
+            # Periodic heuristic improvements
+            if (use_heuristic and self.heuristic_strategy != HeuristicStrategy.NONE and
+                    self._should_run_periodic_heuristic(time.time() - start_time)):
+                self._run_periodic_heuristic_improvement(time.time() - start_time)
 
             # Solve LP relaxation for current node
             result = self._solve_lp_relaxation(current_node)
@@ -136,10 +236,11 @@ class BranchAndBoundSCPPriority:
                     self.best_solution_value = obj_val
                     self.best_solution = {i: int(round(v)) for i, v in solution.items()}
                     self.initial_solutions_found += 1
+                    print(f"New best integer solution found: {obj_val}")
                 continue
 
             # Branch on fractional variable
-            branch_var, branch_val = self._select_branching_variable(fractional_vars)
+            branch_var, branch_val = self._select_branching_variable(fractional_vars, current_node)
 
             # Create child nodes
             children = self._create_child_nodes(current_node, branch_var, obj_val, fractional_vars)
@@ -147,8 +248,192 @@ class BranchAndBoundSCPPriority:
             # Add children to queue based on strategy
             self._add_nodes_to_queue(node_queue, children)
 
+        # Phase 3: Final intensification (if using advanced heuristics)
+        if (use_heuristic and self.heuristic_strategy == HeuristicStrategy.ADVANCED and
+                self.adaptive_manager and self.best_solution_value < float('inf')):
+            remaining_time = time_limit - (time.time() - start_time)
+            if remaining_time > 5.0:
+                current_best_sol = HeuristicSolution(
+                    self.best_solution, self.best_solution_value, "branch_and_bound", 0
+                )
+                final_solution = self.adaptive_manager.phase3_final_intensification(current_best_sol)
+                if final_solution and final_solution.cost < self.best_solution_value:
+                    self.best_solution_value = final_solution.cost
+                    self.best_solution = final_solution.solution
+                    print(f"Final intensification improved solution to: {final_solution.cost}")
+
         solve_time = time.time() - start_time
-        return Result(self.best_solution_value, self.best_solution, solve_time, self.nodes_explored)
+
+        # Prepare heuristic info for result
+        heuristic_info = {
+            'strategy': self.heuristic_strategy.value,
+            'total_heuristic_time': self.total_heuristic_time,
+            'heuristic_calls': self.heuristic_calls,
+            'heuristic_improvements': self.heuristic_improvements,
+            'performance': self.heuristic_performance
+        }
+
+        return Result(self.best_solution_value, self.best_solution, solve_time,
+                      self.nodes_explored, heuristic_info)
+
+    def _run_initial_heuristics(self, time_budget):
+        """Run initial heuristic phase"""
+        start_time = time.time()
+        solutions = []
+
+        print(f"Running initial heuristics (budget: {time_budget:.1f}s)")
+
+        if self.heuristic_strategy == HeuristicStrategy.BASIC:
+            # Only constructive heuristics
+            methods = [
+                ('greedy_cost_effectiveness', self.constructive_heuristics.greedy_cost_effectiveness),
+                ('greedy_max_coverage', self.constructive_heuristics.greedy_max_coverage),
+                ('randomized_greedy', lambda: self.constructive_heuristics.randomized_greedy(iterations=3))
+            ]
+
+        elif self.heuristic_strategy == HeuristicStrategy.INTERMEDIATE:
+            # Constructive + quick local search
+            methods = [
+                ('greedy_cost_effectiveness', self.constructive_heuristics.greedy_cost_effectiveness),
+                ('greedy_max_coverage', self.constructive_heuristics.greedy_max_coverage),
+                ('randomized_greedy', lambda: self.constructive_heuristics.randomized_greedy(iterations=5))
+            ]
+
+        elif self.heuristic_strategy == HeuristicStrategy.ADVANCED:
+            # Use adaptive manager
+            return self.adaptive_manager.phase1_quick_heuristics()
+
+        elif self.heuristic_strategy == HeuristicStrategy.CUSTOM:
+            # Custom mix
+            methods = [
+                ('greedy_cost_effectiveness', self.constructive_heuristics.greedy_cost_effectiveness),
+                ('greedy_min_cost', self.constructive_heuristics.greedy_min_cost),
+                ('randomized_greedy', lambda: self.constructive_heuristics.randomized_greedy(iterations=5))
+            ]
+
+        # Run the methods
+        for method_name, method_func in methods:
+            if time.time() - start_time > time_budget * 0.8:
+                break
+
+            try:
+                heuristic_start = time.time()
+                solution = method_func()
+                heuristic_time = time.time() - heuristic_start
+
+                solutions.append(solution)
+                self.heuristic_calls += 1
+                self.total_heuristic_time += heuristic_time
+
+                # Track performance
+                self.heuristic_performance['initial_phase'][method_name] = {
+                    'cost': solution.cost,
+                    'time': heuristic_time
+                }
+                self.heuristic_performance['method_calls'][method_name] = \
+                    self.heuristic_performance['method_calls'].get(method_name, 0) + 1
+
+                print(f"  {method_name}: cost={solution.cost:.1f}, time={heuristic_time:.3f}s")
+
+            except Exception as e:
+                print(f"  {method_name} failed: {e}")
+
+        # Quick local search on best solution if we have intermediate/custom strategy
+        if (solutions and self.heuristic_strategy in [HeuristicStrategy.INTERMEDIATE, HeuristicStrategy.CUSTOM]
+                and time.time() - start_time < time_budget * 0.9):
+
+            best_sol = min(solutions, key=lambda x: x.cost)
+            try:
+                heuristic_start = time.time()
+                improved = self.local_search_heuristics.local_search_swap(best_sol, max_iterations=30)
+                heuristic_time = time.time() - heuristic_start
+
+                solutions.append(improved)
+                self.total_heuristic_time += heuristic_time
+                self.heuristic_calls += 1
+
+                if improved.cost < best_sol.cost:
+                    self.heuristic_improvements += 1
+
+                print(f"  local_search_swap: cost={improved.cost:.1f}, time={heuristic_time:.3f}s")
+
+            except Exception as e:
+                print(f"  local_search_swap failed: {e}")
+
+        return solutions
+
+    def _should_run_periodic_heuristic(self, elapsed_time):
+        """Determine if we should run periodic heuristic improvement"""
+        # Don't run too frequently
+        if self.nodes_since_last_heuristic < 100:
+            return False
+
+        # Don't run in first 10% of time (initial phase)
+        if elapsed_time < 0.1 * 300:  # Assuming 300s default time limit
+            return False
+
+        # Run every 200 nodes or every 60 seconds
+        if (self.nodes_since_last_heuristic >= 200 or
+                elapsed_time - self.last_heuristic_time > 60):
+            return True
+
+        return False
+
+    def _run_periodic_heuristic_improvement(self, elapsed_time):
+        """Run periodic heuristic improvement during B&B"""
+        if self.best_solution_value == float('inf'):
+            return
+
+        current_best = HeuristicSolution(
+            self.best_solution, self.best_solution_value, "current_best", 0
+        )
+
+        improvement_found = False
+        heuristic_start = time.time()
+
+        try:
+            if self.heuristic_strategy == HeuristicStrategy.INTERMEDIATE:
+                # Quick local search
+                improved = self.local_search_heuristics.local_search_drop_add(
+                    current_best, max_iterations=20
+                )
+
+            elif self.heuristic_strategy == HeuristicStrategy.ADVANCED:
+                # Use adaptive manager
+                improved = self.adaptive_manager.periodic_heuristic_improvement(
+                    current_best, time_budget=3.0
+                )
+
+            elif self.heuristic_strategy == HeuristicStrategy.CUSTOM:
+                # Custom improvement
+                improved = self.local_search_heuristics.local_search_swap(
+                    current_best, max_iterations=30
+                )
+            else:
+                improved = None
+
+            if improved and improved.cost < self.best_solution_value:
+                self.best_solution_value = improved.cost
+                self.best_solution = improved.solution
+                improvement_found = True
+                self.heuristic_improvements += 1
+                print(f"Periodic heuristic improvement: {improved.cost:.1f}")
+
+        except Exception as e:
+            print(f"Periodic heuristic failed: {e}")
+
+        heuristic_time = time.time() - heuristic_start
+        self.total_heuristic_time += heuristic_time
+        self.heuristic_calls += 1
+        self.nodes_since_last_heuristic = 0
+        self.last_heuristic_time = elapsed_time
+
+        # Track performance
+        self.heuristic_performance['periodic_improvements'][f'call_{self.heuristic_calls}'] = {
+            'improvement_found': improvement_found,
+            'time': heuristic_time,
+            'nodes_since_last': self.nodes_since_last_heuristic
+        }
 
     def _get_next_node(self, node_queue):
         """Get next node based on search strategy"""
@@ -242,8 +527,20 @@ class BranchAndBoundSCPPriority:
         m.dispose()
         return obj_val, solution, fractional_vars
 
-    def _select_branching_variable(self, fractional_vars):
+    def _select_branching_variable(self, fractional_vars, node):
         """Select which fractional variable to branch on"""
+        # Enhanced branching variable selection using heuristic guidance
+        if (self.heuristic_strategy == HeuristicStrategy.ADVANCED and
+                self.adaptive_manager and len(fractional_vars) > 1):
+            try:
+                branch_var, method = self.adaptive_manager.get_branching_guidance(
+                    fractional_vars, node.lower_bound
+                )
+                return branch_var, None
+            except:
+                pass  # Fall back to default
+
+        # Default strategy based on search strategy
         if self.strategy == SearchStrategy.MOST_FRACTIONAL:
             # Branch on variable closest to 0.5
             return min(fractional_vars, key=lambda item: abs(0.5 - item[1]))
@@ -324,51 +621,71 @@ class BranchAndBoundSCPPriority:
         self.best_solution = sol
 
 
-def compare_strategies(filename, strategies=None, runs=5, time_limit=60):
-    """Compare different search strategies"""
+def compare_strategies(filename, strategies=None, heuristic_strategies=None, runs=5, time_limit=60):
+    """Compare different search strategies and heuristic combinations"""
     if strategies is None:
         strategies = [SearchStrategy.DEPTH_FIRST, SearchStrategy.BREADTH_FIRST,
                       SearchStrategy.BEST_FIRST, SearchStrategy.HYBRID_DF_BF]
 
+    if heuristic_strategies is None:
+        heuristic_strategies = [HeuristicStrategy.NONE, HeuristicStrategy.BASIC,
+                                HeuristicStrategy.INTERMEDIATE]
+
     results = {}
 
     for strategy in strategies:
-        print(f"\nTesting strategy: {strategy.value}")
-        times = []
-        costs = []
-        nodes = []
+        for heuristic_strategy in heuristic_strategies:
+            combo_name = f"{strategy.value}_{heuristic_strategy.value}"
+            print(f"\nTesting combination: {combo_name}")
 
-        for run in range(runs):
-            solver = BranchAndBoundSCPPriority(filename, strategy)
-            result = solver.solve(use_heuristic=True, time_limit=time_limit)
+            times = []
+            costs = []
+            nodes = []
+            heuristic_times = []
+            heuristic_calls = []
 
-            times.append(result.getTime())
-            costs.append(result.getOV())
-            nodes.append(result.getNodesExplored())
+            for run in range(runs):
+                solver = BranchAndBoundSCPPriority(filename, strategy, heuristic_strategy)
+                result = solver.solve(use_heuristic=(heuristic_strategy != HeuristicStrategy.NONE),
+                                      time_limit=time_limit)
 
-            print(
-                f"  Run {run + 1}: Time={result.getTime():.4f}s, Cost={result.getOV()}, Nodes={result.getNodesExplored()}")
+                times.append(result.getTime())
+                costs.append(result.getOV())
+                nodes.append(result.getNodesExplored())
 
-        results[strategy.value] = {
-            'avg_time': np.mean(times),
-            'avg_cost': np.mean(costs),
-            'avg_nodes': np.mean(nodes),
-            'min_time': np.min(times),
-            'max_time': np.max(times),
-            'std_time': np.std(times),
-            'best_cost': np.min(costs)
-        }
+                heuristic_info = result.getHeuristicInfo()
+                heuristic_times.append(heuristic_info.get('total_heuristic_time', 0))
+                heuristic_calls.append(heuristic_info.get('heuristic_calls', 0))
+
+                print(f"  Run {run + 1}: Time={result.getTime():.4f}s, Cost={result.getOV()}, "
+                      f"Nodes={result.getNodesExplored()}, HeurTime={heuristic_info.get('total_heuristic_time', 0):.3f}s, "
+                      f"HeurCalls={heuristic_info.get('heuristic_calls', 0)}")
+
+            results[combo_name] = {
+                'strategy': strategy.value,
+                'heuristic_strategy': heuristic_strategy.value,
+                'avg_time': np.mean(times),
+                'avg_cost': np.mean(costs),
+                'avg_nodes': np.mean(nodes),
+                'min_time': np.min(times),
+                'max_time': np.max(times),
+                'std_time': np.std(times),
+                'best_cost': np.min(costs),
+                'avg_heuristic_time': np.mean(heuristic_times),
+                'avg_heuristic_calls': np.mean(heuristic_calls)
+            }
 
     # Print comparison
-    print("\n" + "=" * 80)
-    print("STRATEGY COMPARISON RESULTS")
-    print("=" * 80)
-    print(f"{'Strategy':<20} {'Avg Time':<10} {'Best Cost':<10} {'Avg Nodes':<12} {'Time Std':<10}")
-    print("-" * 80)
+    print("\n" + "=" * 100)
+    print("STRATEGY + HEURISTIC COMBINATION RESULTS")
+    print("=" * 100)
+    print(
+        f"{'Combination':<30} {'Avg Time':<10} {'Best Cost':<10} {'Avg Nodes':<12} {'Heur Time':<10} {'Heur Calls':<10}")
+    print("-" * 100)
 
-    for strategy, stats in results.items():
-        print(
-            f"{strategy:<20} {stats['avg_time']:<10.4f} {stats['best_cost']:<10.0f} {stats['avg_nodes']:<12.0f} {stats['std_time']:<10.4f}")
+    for combo_name, stats in results.items():
+        print(f"{combo_name:<30} {stats['avg_time']:<10.4f} {stats['best_cost']:<10.0f} "
+              f"{stats['avg_nodes']:<12.0f} {stats['avg_heuristic_time']:<10.3f} {stats['avg_heuristic_calls']:<10.0f}")
 
     return results
 
@@ -378,12 +695,13 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    # Test single strategy
-    print("Testing single strategy...")
-    solver = BranchAndBoundSCPPriority('scp44.txt', SearchStrategy.DEPTH_FIRST)
+    # Test single strategy with heuristics
+    print("Testing single strategy with heuristics...")
+    solver = BranchAndBoundSCPPriority('scp44.txt', SearchStrategy.DEPTH_FIRST, HeuristicStrategy.INTERMEDIATE)
     result = solver.solve(use_heuristic=True, time_limit=30)
     print(f"Result: Cost={result.getOV()}, Time={result.getTime():.4f}s, Nodes={result.getNodesExplored()}")
+    print(f"Heuristic Info: {result.getHeuristicInfo()}")
 
-    # Compare strategies
-    print("\nComparing strategies...")
-    compare_results = compare_strategies('scp44.txt', runs=3, time_limit=30)
+    # Compare strategies with heuristics
+    print("\nComparing strategies with heuristics...")
+    compare_results = compare_strategies('scp44.txt', runs=2, time_limit=30)

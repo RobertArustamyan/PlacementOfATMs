@@ -2,11 +2,9 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime
-import time
 from branch_bound_priority import BranchAndBoundSCPPriority, SearchStrategy, HeuristicStrategy, compare_strategies
-
+import seaborn as sns
 
 class EnhancedStrategyAnalyzer:
     """Comprehensive analyzer for branch-and-bound strategies with heuristics"""
@@ -17,19 +15,19 @@ class EnhancedStrategyAnalyzer:
 
         # Search strategies to test
         self.search_strategies = [
-            # SearchStrategy.DEPTH_FIRST,
-            # SearchStrategy.BREADTH_FIRST,
+            SearchStrategy.DEPTH_FIRST,
+            SearchStrategy.BREADTH_FIRST,
             SearchStrategy.BEST_FIRST,
-            # SearchStrategy.HYBRID_DF_BF,
-            # SearchStrategy.MOST_FRACTIONAL
+            SearchStrategy.HYBRID_DF_BF,
+            SearchStrategy.MOST_FRACTIONAL
         ]
 
         # Heuristic strategies to test
         self.heuristic_strategies = [
             HeuristicStrategy.NONE,
             HeuristicStrategy.BASIC,
-            # HeuristicStrategy.INTERMEDIATE,
-            # HeuristicStrategy.ADVANCED
+            HeuristicStrategy.INTERMEDIATE,
+            HeuristicStrategy.ADVANCED
         ]
 
         # Create output directory
@@ -70,7 +68,9 @@ class EnhancedStrategyAnalyzer:
 
                             heuristic_info = result.getHeuristicInfo()
                             is_feasible = result.getOV() < float('inf')
-                            is_optimal = is_feasible and result.getTime() < time_limit
+                            is_optimal = result.isOptimal() if hasattr(result, 'isOptimal') else (
+                                is_feasible and result.getGap() <= 1e-6 if hasattr(result, 'getGap') else False
+                            )
                             run_data = {
                                 'filename': filename,
                                 'search_strategy': search_strategy.value,
@@ -80,8 +80,8 @@ class EnhancedStrategyAnalyzer:
                                 'cost': result.getOV(),
                                 'time': result.getTime(),
                                 'nodes_explored': result.getNodesExplored(),
-                                'feasible': is_feasible,  # BUG FIX 1: Renamed from 'optimal'
-                                'optimal': is_optimal,  # BUG FIX 1: Added proper optimal check
+                                'feasible': is_feasible,
+                                'optimal': is_optimal,
                                 'heuristic_time': heuristic_info.get('total_heuristic_time', 0),
                                 'heuristic_calls': heuristic_info.get('heuristic_calls', 0),
                                 'heuristic_improvements': heuristic_info.get('heuristic_improvements', 0),
@@ -233,8 +233,7 @@ class EnhancedStrategyAnalyzer:
                   f"Total Time={stats['time']:.3f}s (BB: {stats['bb_time']:.3f}s, Heur: {stats['heuristic_time']:.3f}s), "
                   f"Heur Calls={stats['heuristic_calls']:.1f}, Improvements={stats['heuristic_improvements']:.1f}")
 
-        # Added code
-        # -------------------
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_filename_stats = os.path.join(self.output_dir, f"SummaryStats_{timestamp}.csv")
         csv_filename_rates = os.path.join(self.output_dir, f"SuccessRates_{timestamp}.csv")
@@ -243,7 +242,6 @@ class EnhancedStrategyAnalyzer:
         summary_stats.to_csv(csv_filename_stats, index=True)
         success_rates.to_csv(csv_filename_rates, index=True)
         heuristic_analysis.to_csv(csv_filename_heursitic, index=True)
-        # -------------------
 
         return summary_stats, success_rates, heuristic_analysis
 
@@ -518,21 +516,19 @@ class EnhancedStrategyAnalyzer:
 
 
 def main():
-    """Main function to run the complete enhanced analysis"""
+    """Main function to run the complete analysis"""
     print("Enhanced Branch-and-Bound Strategy Analysis with Heuristics")
     print("=" * 70)
 
     # Initialize analyzer
 
     analyzer = EnhancedStrategyAnalyzer(
-        # test_files=[f for f in os.listdir('../SCPData') if f.endswith('.txt')],
-        # test_files=['scpa3.txt','scpa4.txt','scpa5.txt','scpb2.txt','scpb3.txt','scpc2.txt','scpc3.txt','scpc4.txt','scpc5.txt','scpclr10.txt'],
-        test_files=['scp45.txt'],
+        test_files=[f for f in os.listdir('../SCPData') if f.endswith('.txt')],
         output_dir="enhanced_strategy_analysis_results"
     )
 
     # Run comprehensive analysis (If code is already executed comment the lower one and uncomment the second line)
-    df = analyzer.run_comprehensive_analysis(runs_per_test=1, time_limit=600)
+    df = analyzer.run_comprehensive_analysis(runs_per_test=1, time_limit=120)
     # df = pd.read_csv("enhanced_strategy_analysis_results/enhanced_strategy_results_20250528_180539.csv")
 
     # Analyze results

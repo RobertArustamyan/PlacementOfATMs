@@ -4,7 +4,7 @@ import time
 import numpy as np
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from gurobipy import Env, Model, GRB, LinExpr
 from utils.scp_data_reading import read_scp_raw_data, convert_scp_data_to_objects
 from algorithms.heuristics_file import AdaptiveManager, HeuristicSolution, ConstructiveHeuristics, \
@@ -67,6 +67,11 @@ class Result:
     def getHeuristicInfo(self):
         return self._heuristic_info
 
+    def getGap(self):
+        return self._heuristic_info.get('gap', float('inf'))
+
+    def isOptimal(self):
+        return self._heuristic_info.get('is_optimal', False)
 
 class BranchAndBoundSCPPriority:
     GAP_TOLERANCE = 1e-10
@@ -176,6 +181,9 @@ class BranchAndBoundSCPPriority:
         # FIX 2: Store time_limit for use in other methods
         self.current_time_limit = time_limit
 
+        # Initialize best lower bound for gap calculation
+        best_lower_bound = 0.0  # Since all costs are non-negative in set cover
+
         # Initialize heuristics if requested
         if use_heuristic and self.heuristic_strategy != HeuristicStrategy.NONE:
             self._initialize_heuristics(time_limit)
@@ -236,6 +244,16 @@ class BranchAndBoundSCPPriority:
 
             obj_val, solution, fractional_vars = result
 
+            # Update best lower bound (for gap calculation)
+            # The best lower bound is the minimum LP relaxation value among all active nodes
+            if self.nodes_explored == 1:  # Root node
+                best_lower_bound = obj_val
+            elif node_queue:  # If there are nodes in the queue
+                # For exact calculation, we'd need to track bounds for all active nodes
+                # Here we use a simple approximation: current node's bound
+                if obj_val < self.best_solution_value:
+                    best_lower_bound = max(best_lower_bound, obj_val)
+
             # Prune if bound is worse than best known solution
             if obj_val >= self.best_solution_value - self.GAP_TOLERANCE:
                 continue
@@ -280,12 +298,21 @@ class BranchAndBoundSCPPriority:
         solve_time = time.time() - start_time
 
         # Prepare heuristic info for result
+        if self.best_solution_value < float('inf') and best_lower_bound > float('-inf'):
+            gap = (self.best_solution_value - best_lower_bound) / max(abs(self.best_solution_value), 1e-10)
+        else:
+            gap = float('inf')
+        is_optimal = (gap <= self.GAP_TOLERANCE) if gap < float('inf') else False
+
         heuristic_info = {
             'strategy': self.heuristic_strategy.value,
             'total_heuristic_time': self.total_heuristic_time,
             'heuristic_calls': self.heuristic_calls,
             'heuristic_improvements': self.heuristic_improvements,
-            'performance': self.heuristic_performance
+            'performance': self.heuristic_performance,
+            'gap': gap,
+            'is_optimal': is_optimal,
+            'best_lower_bound': best_lower_bound
         }
 
         return Result(self.best_solution_value, self.best_solution, solve_time,
@@ -558,7 +585,7 @@ class BranchAndBoundSCPPriority:
                 branch_var, method = self.adaptive_manager.get_branching_guidance(
                     fractional_vars, node.lower_bound
                 )
-                return branch_var, None
+                return branch_var
             except Exception as e:
                 print(f"Advanced branching guidance failed: {e}")
                 pass  # Fall back to default
@@ -566,11 +593,22 @@ class BranchAndBoundSCPPriority:
         # Default strategy based on search strategy
         if self.strategy == SearchStrategy.MOST_FRACTIONAL:
             # Branch on variable closest to 0.5
-            return min(fractional_vars, key=lambda item: abs(0.5 - item[1]))
+            branch_var, _ = min(fractional_vars, key=lambda item: abs(0.5 - item[1]))
+            return branch_var
+        elif self.strategy == SearchStrategy.BEST_BOUND:
+            best_var = None
+            best_cost = -1
+            for var_id, frac_val in fractional_vars:
+                for atm in self.atm_list:
+                    if atm.id == var_id:
+                        if atm.cost > best_cost:
+                            best_cost = atm.cost
+                            best_var = var_id
+                        break
+            return best_var if best_var is not None else fractional_vars[0][0]
         else:
-            # Default: branch on variable closest to 0.5
-            return min(fractional_vars, key=lambda item: abs(0.5 - item[1]))
-
+            # Default: branch on first fractional variable (simple strategy)
+            return fractional_vars[0][0]
     def _create_child_nodes(self, parent, branch_var, parent_bound, fractional_vars):
         """Create child nodes by branching on the selected variable"""
         children = []

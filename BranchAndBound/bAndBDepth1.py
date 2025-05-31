@@ -228,14 +228,14 @@ if __name__ == "__main__":
     #
     # print(f"Tactic '{tactic_name}' results saved to {excel_file_path}")
 
-    solver = BranchAndBoundSCP('scp43.txt')
+    solver = BranchAndBoundSCP('scpb4.txt')
     results_without_heuristic = []
     results_with_heuristic = []
 
 
 
-    result = solver.solve(use_heuristic=True)
-    print(f"Time to solve with heuristic: {solver.time_to_solve:.10f}  Result: {result.getOV()}")
+    # result = solver.solve(use_heuristic=True)
+    # print(f"Time to solve with heuristic: {solver.time_to_solve:.10f}  Result: {result.getOV()}")
     result = solver.solve(use_heuristic=False)
     print(f"Time to solve without heuristic: {solver.time_to_solve:.10f}  Result: {result.getOV()}")
 

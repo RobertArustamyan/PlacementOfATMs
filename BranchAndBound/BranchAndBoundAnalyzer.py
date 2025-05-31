@@ -17,19 +17,19 @@ class EnhancedStrategyAnalyzer:
 
         # Search strategies to test
         self.search_strategies = [
-            SearchStrategy.DEPTH_FIRST,
-            SearchStrategy.BREADTH_FIRST,
+            # SearchStrategy.DEPTH_FIRST,
+            # SearchStrategy.BREADTH_FIRST,
             SearchStrategy.BEST_FIRST,
-            SearchStrategy.HYBRID_DF_BF,
-            SearchStrategy.MOST_FRACTIONAL
+            # SearchStrategy.HYBRID_DF_BF,
+            # SearchStrategy.MOST_FRACTIONAL
         ]
 
         # Heuristic strategies to test
         self.heuristic_strategies = [
             HeuristicStrategy.NONE,
             HeuristicStrategy.BASIC,
-            HeuristicStrategy.INTERMEDIATE,
-            HeuristicStrategy.ADVANCED
+            # HeuristicStrategy.INTERMEDIATE,
+            # HeuristicStrategy.ADVANCED
         ]
 
         # Create output directory
@@ -69,7 +69,8 @@ class EnhancedStrategyAnalyzer:
                             )
 
                             heuristic_info = result.getHeuristicInfo()
-
+                            is_feasible = result.getOV() < float('inf')
+                            is_optimal = is_feasible and result.getTime() < time_limit
                             run_data = {
                                 'filename': filename,
                                 'search_strategy': search_strategy.value,
@@ -79,7 +80,8 @@ class EnhancedStrategyAnalyzer:
                                 'cost': result.getOV(),
                                 'time': result.getTime(),
                                 'nodes_explored': result.getNodesExplored(),
-                                'optimal': result.getOV() < float('inf'),
+                                'feasible': is_feasible,  # BUG FIX 1: Renamed from 'optimal'
+                                'optimal': is_optimal,  # BUG FIX 1: Added proper optimal check
                                 'heuristic_time': heuristic_info.get('total_heuristic_time', 0),
                                 'heuristic_calls': heuristic_info.get('heuristic_calls', 0),
                                 'heuristic_improvements': heuristic_info.get('heuristic_improvements', 0),
@@ -230,6 +232,18 @@ class EnhancedStrategyAnalyzer:
             print(f"  {heuristic}: Avg Cost={stats['cost']:.1f}, "
                   f"Total Time={stats['time']:.3f}s (BB: {stats['bb_time']:.3f}s, Heur: {stats['heuristic_time']:.3f}s), "
                   f"Heur Calls={stats['heuristic_calls']:.1f}, Improvements={stats['heuristic_improvements']:.1f}")
+
+        # Added code
+        # -------------------
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_filename_stats = os.path.join(self.output_dir, f"SummaryStats_{timestamp}.csv")
+        csv_filename_rates = os.path.join(self.output_dir, f"SuccessRates_{timestamp}.csv")
+        csv_filename_heursitic = os.path.join(self.output_dir, f"HeuristicAnalysis_{timestamp}.csv")
+
+        summary_stats.to_csv(csv_filename_stats, index=True)
+        success_rates.to_csv(csv_filename_rates, index=True)
+        heuristic_analysis.to_csv(csv_filename_heursitic, index=True)
+        # -------------------
 
         return summary_stats, success_rates, heuristic_analysis
 
@@ -509,21 +523,20 @@ def main():
     print("=" * 70)
 
     # Initialize analyzer
+
     analyzer = EnhancedStrategyAnalyzer(
-        test_files=[f for f in os.listdir('../SCPData') if f.endswith('.txt')],
+        # test_files=[f for f in os.listdir('../SCPData') if f.endswith('.txt')],
+        # test_files=['scpa3.txt','scpa4.txt','scpa5.txt','scpb2.txt','scpb3.txt','scpc2.txt','scpc3.txt','scpc4.txt','scpc5.txt','scpclr10.txt'],
+        test_files=['scp45.txt'],
         output_dir="enhanced_strategy_analysis_results"
     )
 
-    # Run comprehensive analysis
-    df = analyzer.run_comprehensive_analysis(runs_per_test=3, time_limit=60)
+    # Run comprehensive analysis (If code is already executed comment the lower one and uncomment the second line)
+    df = analyzer.run_comprehensive_analysis(runs_per_test=1, time_limit=600)
+    # df = pd.read_csv("enhanced_strategy_analysis_results/enhanced_strategy_results_20250528_180539.csv")
 
     # Analyze results
     summary_stats, success_rates, heuristic_analysis = analyzer.analyze_results(df)
-
-    # Added Part!!
-    summary_stats.to_csv("summary_stats.csv")
-    success_rates.to_csv("success_rates.csv")
-    heuristic_analysis.to_csv("heuristic_analysis.csv")
 
     # Create enhanced visualizations
     analyzer.create_enhanced_visualizations(df)

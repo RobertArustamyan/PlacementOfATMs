@@ -78,6 +78,13 @@ class BranchAndBoundSCPPriority:
         self.strategy = strategy
         self.heuristic_strategy = heuristic_strategy
 
+        # FIX 1: Move time allocations to __init__ as instance variable
+        self.time_allocations = {
+            'initial': 0.10,  # 40% for initial heuristics
+            'main': 0.80,  # 50% for main B&B
+            'final': 0.10  # 10% for final intensification
+        }
+
         # Initialize Gurobi environment
         basename = os.path.splitext(os.path.basename(filename))[0]
         log_file_path = os.getenv("LOG_FOLDER_PATH",
@@ -132,13 +139,9 @@ class BranchAndBoundSCPPriority:
             return
 
         print(f"Initializing heuristics with strategy: {self.heuristic_strategy.value}")
-
-        # Adjust time budget allocation for speed
-        time_allocations = {
-            'initial': 0.10,  # 10% for initial heuristics
-            'main': 0.80,  # 80% for main B&B
-            'final': 0.10  # 10% for final intensification
-        }
+        print(f"Time allocations: Initial={self.time_allocations['initial']:.1%}, "
+              f"Main={self.time_allocations['main']:.1%}, "
+              f"Final={self.time_allocations['final']:.1%}")
 
         if self.heuristic_strategy == HeuristicStrategy.BASIC:
             # Only constructive heuristics
@@ -158,7 +161,7 @@ class BranchAndBoundSCPPriority:
                 time_budget=time_budget
             )
             # Update time allocations in the adaptive manager
-            self.adaptive_manager.phase_allocations = time_allocations
+            self.adaptive_manager.phase_allocations = self.time_allocations
 
         elif self.heuristic_strategy == HeuristicStrategy.CUSTOM:
             # Custom selection - initialize all for flexibility
@@ -170,12 +173,16 @@ class BranchAndBoundSCPPriority:
         """Main solve method with configurable strategy"""
         start_time = time.time()
 
+        # FIX 2: Store time_limit for use in other methods
+        self.current_time_limit = time_limit
+
         # Initialize heuristics if requested
         if use_heuristic and self.heuristic_strategy != HeuristicStrategy.NONE:
             self._initialize_heuristics(time_limit)
 
             # Phase 1: Initial heuristic burst
-            initial_phase_time = time_limit * 0.10
+            initial_phase_time = time_limit * self.time_allocations['initial']
+            print(f"Starting initial heuristics phase with {initial_phase_time:.1f}s budget")
             initial_solutions = self._run_initial_heuristics(initial_phase_time)
 
             if initial_solutions:
@@ -194,14 +201,18 @@ class BranchAndBoundSCPPriority:
         )
         self.node_counter += 1
 
-        # Priority queue for nodes
-        if self.strategy == SearchStrategy.DEPTH_FIRST:
+        # Initialize node queue based on strategy
+        if self.strategy in [SearchStrategy.BEST_FIRST, SearchStrategy.BEST_BOUND, SearchStrategy.HYBRID_DF_BF]:
+            # Use heap for priority-based strategies
             node_queue = [root]
+            heapq.heapify(node_queue)
         else:
+            # Use regular list for stack/queue-based strategies
             node_queue = [root]
 
         # Main B&B loop
         bb_start_time = time.time()
+        print(f"Starting main B&B phase with {time_limit * self.time_allocations['main']:.1f}s budget")
 
         while node_queue and (time.time() - start_time) < time_limit:
             # Get next node based on strategy
@@ -240,7 +251,7 @@ class BranchAndBoundSCPPriority:
                 continue
 
             # Branch on fractional variable
-            branch_var, branch_val = self._select_branching_variable(fractional_vars, current_node)
+            branch_var = self._select_branching_variable(fractional_vars, current_node)
 
             # Create child nodes
             children = self._create_child_nodes(current_node, branch_var, obj_val, fractional_vars)
@@ -252,7 +263,11 @@ class BranchAndBoundSCPPriority:
         if (use_heuristic and self.heuristic_strategy == HeuristicStrategy.ADVANCED and
                 self.adaptive_manager and self.best_solution_value < float('inf')):
             remaining_time = time_limit - (time.time() - start_time)
-            if remaining_time > 5.0:
+            final_phase_budget = time_limit * self.time_allocations['final']
+            final_time = min(remaining_time, final_phase_budget)
+
+            if final_time > 5.0:
+                print(f"Starting final intensification phase with {final_time:.1f}s budget")
                 current_best_sol = HeuristicSolution(
                     self.best_solution, self.best_solution_value, "branch_and_bound", 0
                 )
@@ -301,7 +316,11 @@ class BranchAndBoundSCPPriority:
 
         elif self.heuristic_strategy == HeuristicStrategy.ADVANCED:
             # Use adaptive manager
-            return self.adaptive_manager.phase1_quick_heuristics()
+            try:
+                return self.adaptive_manager.phase1_quick_heuristics()
+            except Exception as e:
+                print(f"Advanced heuristic phase1 failed: {e}")
+                return []
 
         elif self.heuristic_strategy == HeuristicStrategy.CUSTOM:
             # Custom mix
@@ -368,8 +387,11 @@ class BranchAndBoundSCPPriority:
         if self.nodes_since_last_heuristic < 100:
             return False
 
-        # Don't run in first 10% of time (initial phase)
-        if elapsed_time < 0.1 * 300:  # Assuming 300s default time limit
+        # FIX 3: Use actual time allocations instead of hardcoded values
+        initial_phase_time = self.current_time_limit * self.time_allocations['initial']
+
+        # Don't run during initial phase
+        if elapsed_time < initial_phase_time:
             return False
 
         # Run every 200 nodes or every 60 seconds
@@ -537,7 +559,8 @@ class BranchAndBoundSCPPriority:
                     fractional_vars, node.lower_bound
                 )
                 return branch_var, None
-            except:
+            except Exception as e:
+                print(f"Advanced branching guidance failed: {e}")
                 pass  # Fall back to default
 
         # Default strategy based on search strategy
@@ -586,39 +609,18 @@ class BranchAndBoundSCPPriority:
 
         return children
 
-    def greedy_heuristic(self):
-        """Greedy heuristic to find initial feasible solution"""
-        uncovered_users = set(self.user_coverage.keys())
-        selected_atms = set()
-        total_cost = 0
+    # FIX 4: Add method to easily change time allocations
+    def set_time_allocations(self, initial=0.40, main=0.50, final=0.10):
+        """Set custom time allocations for different phases"""
+        if abs(initial + main + final - 1.0) > 1e-6:
+            raise ValueError("Time allocations must sum to 1.0")
 
-        while uncovered_users:
-            best_atm = None
-            best_score = float('-inf')
-
-            for atm in self.atm_list:
-                if atm.id in selected_atms:
-                    continue
-
-                covers = uncovered_users.intersection(atm.covered_users_ids)
-                if not covers:
-                    continue
-
-                score = len(covers) / atm.cost
-                if score > best_score:
-                    best_score = score
-                    best_atm = atm
-
-            if best_atm is None:
-                break
-
-            selected_atms.add(best_atm.id)
-            uncovered_users -= set(best_atm.covered_users_ids)
-            total_cost += best_atm.cost
-
-        sol = {atm.id: 1 if atm.id in selected_atms else 0 for atm in self.atm_list}
-        self.best_solution_value = total_cost
-        self.best_solution = sol
+        self.time_allocations = {
+            'initial': initial,
+            'main': main,
+            'final': final
+        }
+        print(f"Updated time allocations: Initial={initial:.1%}, Main={main:.1%}, Final={final:.1%}")
 
 
 def compare_strategies(filename, strategies=None, heuristic_strategies=None, runs=5, time_limit=60):

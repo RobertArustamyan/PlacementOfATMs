@@ -73,6 +73,7 @@ class Result:
     def isOptimal(self):
         return self._heuristic_info.get('is_optimal', False)
 
+
 class BranchAndBoundSCPPriority:
     GAP_TOLERANCE = 1e-10
 
@@ -83,10 +84,9 @@ class BranchAndBoundSCPPriority:
         self.strategy = strategy
         self.heuristic_strategy = heuristic_strategy
 
-        # FIX 1: Move time allocations to __init__ as instance variable
         self.time_allocations = {
-            'initial': 0.10,  # 40% for initial heuristics
-            'main': 0.80,  # 50% for main B&B
+            'initial': 0.10,  # 10% for initial heuristics
+            'main': 0.80,  # 80% for main B&B
             'final': 0.10  # 10% for final intensification
         }
 
@@ -178,7 +178,6 @@ class BranchAndBoundSCPPriority:
         """Main solve method with configurable strategy"""
         start_time = time.time()
 
-        # FIX 2: Store time_limit for use in other methods
         self.current_time_limit = time_limit
 
         # Initialize best lower bound for gap calculation
@@ -414,7 +413,6 @@ class BranchAndBoundSCPPriority:
         if self.nodes_since_last_heuristic < 100:
             return False
 
-        # FIX 3: Use actual time allocations instead of hardcoded values
         initial_phase_time = self.current_time_limit * self.time_allocations['initial']
 
         # Don't run during initial phase
@@ -609,6 +607,7 @@ class BranchAndBoundSCPPriority:
         else:
             # Default: branch on first fractional variable (simple strategy)
             return fractional_vars[0][0]
+
     def _create_child_nodes(self, parent, branch_var, parent_bound, fractional_vars):
         """Create child nodes by branching on the selected variable"""
         children = []
@@ -647,7 +646,6 @@ class BranchAndBoundSCPPriority:
 
         return children
 
-    # FIX 4: Add method to easily change time allocations
     def set_time_allocations(self, initial=0.40, main=0.50, final=0.10):
         """Set custom time allocations for different phases"""
         if abs(initial + main + final - 1.0) > 1e-6:

@@ -246,115 +246,269 @@ class EnhancedStrategyAnalyzer:
         return summary_stats, success_rates, heuristic_analysis
 
     def create_enhanced_visualizations(self, df):
-        """Create enhanced visualizations including heuristic analysis"""
+        """Create enhanced visualizations for branch-and-bound strategy comparison"""
         plt.style.use('seaborn-v0_8')
 
         # Set up the plotting area
-        fig, axes = plt.subplots(3, 2, figsize=(18, 18))
-        fig.suptitle('Enhanced Branch-and-Bound Strategy Comparison with Heuristics',
+        fig, axes = plt.subplots(4, 2, figsize=(20, 24))
+        fig.suptitle('Branch-and-Bound Strategy Comparison: Search Strategies vs Heuristics',
                      fontsize=16, fontweight='bold')
 
-        successful_runs = df[df['optimal'] == True]
+        # Filter successful runs (optimal solutions found)
+        successful_runs = df[df['optimal'] == True].copy()
 
-        # 1. Time comparison by combination (top combinations only)
+        # 1. Cost comparison by search strategy
+        axes[0, 0].set_title('Solution Cost by Search Strategy', fontsize=12, fontweight='bold')
         if len(successful_runs) > 0:
-            # Get top 10 combinations by average cost
-            top_combos = successful_runs.groupby('combination')['cost'].mean().nsmallest(10).index
-            top_combo_data = successful_runs[successful_runs['combination'].isin(top_combos)]
+            search_costs = successful_runs.groupby('search_strategy')['cost'].agg(['mean', 'std', 'count'])
+            x_pos = range(len(search_costs))
+            bars = axes[0, 0].bar(x_pos, search_costs['mean'],
+                                  yerr=search_costs['std'], capsize=5, alpha=0.8)
+            axes[0, 0].set_xticks(x_pos)
+            axes[0, 0].set_xticklabels(search_costs.index, rotation=0, ha='right')
+            axes[0, 0].set_xlabel('Search Strategy')
+            axes[0, 0].set_ylabel('Average Cost')
 
-            axes[0, 0].set_title('Solution Time Distribution (Top 10 Combinations)')
-            if len(top_combo_data) > 0:
-                top_combo_data.boxplot(column='time', by='combination', ax=axes[0, 0])
-                axes[0, 0].tick_params(axis='x', rotation=45)
-                axes[0, 0].set_xlabel('Strategy Combination')
-                axes[0, 0].set_ylabel('Time (seconds)')
+            # Add count labels on bars
+            for i, (bar, count) in enumerate(zip(bars, search_costs['count'])):
+                axes[0, 0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                                f'n={count}', ha='center', va='bottom', fontsize=9)
 
-        # 2. Cost comparison by heuristic strategy
+        # 2. Time comparison by search strategy
+        axes[0, 1].set_title('Solution Time by Search Strategy', fontsize=12, fontweight='bold')
         if len(successful_runs) > 0:
-            axes[0, 1].set_title('Solution Cost by Heuristic Strategy')
-            heuristic_costs = successful_runs.groupby('heuristic_strategy')['cost'].mean()
-            axes[0, 1].bar(heuristic_costs.index, heuristic_costs.values)
-            axes[0, 1].set_xlabel('Heuristic Strategy')
-            axes[0, 1].set_ylabel('Average Cost')
-            axes[0, 1].tick_params(axis='x', rotation=45)
+            # Create box plot for time distribution
+            search_strategies = successful_runs['search_strategy'].unique()
+            time_data = [successful_runs[successful_runs['search_strategy'] == strategy]['time'].values
+                         for strategy in search_strategies]
 
-        # 3. Heuristic time vs B&B time
-        heuristic_runs = df[df['heuristic_strategy'] != 'none']
-        if len(heuristic_runs) > 0:
-            axes[1, 0].set_title('Heuristic Time vs Branch-and-Bound Time')
-            axes[1, 0].scatter(heuristic_runs['bb_time'], heuristic_runs['heuristic_time'],
-                               alpha=0.6, c=heuristic_runs['cost'], cmap='viridis')
-            axes[1, 0].set_xlabel('Branch-and-Bound Time (s)')
-            axes[1, 0].set_ylabel('Heuristic Time (s)')
+            box_plot = axes[0, 1].boxplot(time_data, labels=search_strategies, patch_artist=True)
+            axes[0, 1].set_xlabel('Search Strategy')
+            axes[0, 1].set_ylabel('Time (seconds)')
+            axes[0, 1].tick_params(axis='x', rotation=0)
 
-            # Add diagonal line for reference
-            max_time = max(heuristic_runs['bb_time'].max(), heuristic_runs['heuristic_time'].max())
-            axes[1, 0].plot([0, max_time], [0, max_time], 'r--', alpha=0.5, label='Equal time')
-            axes[1, 0].legend()
+            # Color the boxes
+            colors = plt.cm.Set3(np.linspace(0, 1, len(box_plot['boxes'])))
+            for patch, color in zip(box_plot['boxes'], colors):
+                patch.set_facecolor(color)
 
-        # 4. Heuristic efficiency by strategy
-        heuristic_runs_successful = heuristic_runs[heuristic_runs['optimal'] == True]
-        if len(heuristic_runs_successful) > 0:
-            axes[1, 1].set_title('Heuristic Efficiency by Strategy')
-            efficiency_data = heuristic_runs_successful.groupby('heuristic_strategy')['heuristic_efficiency'].mean()
-            axes[1, 1].bar(efficiency_data.index, efficiency_data.values)
-            axes[1, 1].set_xlabel('Heuristic Strategy')
-            axes[1, 1].set_ylabel('Average Heuristic Efficiency')
-            axes[1, 1].tick_params(axis='x', rotation=45)
+        # 3. Nodes explored by search strategy
+        axes[1, 0].set_title('Nodes Explored by Search Strategy', fontsize=12, fontweight='bold')
+        if len(successful_runs) > 0:
+            nodes_data = successful_runs.groupby('search_strategy')['nodes_explored'].agg(['mean', 'std'])
+            x_pos = range(len(nodes_data))
+            bars = axes[1, 0].bar(x_pos, nodes_data['mean'],
+                                  yerr=nodes_data['std'], capsize=5, alpha=0.8, color='lightcoral')
+            axes[1, 0].set_xticks(x_pos)
+            axes[1, 0].set_xticklabels(nodes_data.index, rotation=0, ha='right')
+            axes[1, 0].set_xlabel('Search Strategy')
+            axes[1, 0].set_ylabel('Average Nodes Explored')
+            axes[1, 0].set_yscale('log')  # Use log scale due to potentially large differences
 
-        # 5. Success rate by combination
-        success_rates = df.groupby('combination')['optimal'].agg(lambda x: x.sum() / len(x))
-        # Show top 15 combinations
-        top_success_combos = success_rates.nlargest(15)
+            # Add mean value labels on bars
+            for i, (bar, mean_val) in enumerate(zip(bars, nodes_data['mean'])):
+                axes[1, 0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.1,
+                                f'{mean_val:.0f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
 
-        axes[2, 0].set_title('Success Rate by Top Combinations')
-        axes[2, 0].bar(range(len(top_success_combos)), top_success_combos.values)
-        axes[2, 0].set_xticks(range(len(top_success_combos)))
-        axes[2, 0].set_xticklabels(top_success_combos.index, rotation=45, ha='right')
+        # 4. Heuristic impact analysis
+        axes[1, 1].set_title('Impact of Heuristics on Performance', fontsize=12, fontweight='bold')
+        if len(successful_runs) > 0:
+            # Compare performance with and without heuristics
+            no_heuristic = successful_runs[successful_runs['heuristic_strategy'] == 'none']
+            with_heuristic = successful_runs[successful_runs['heuristic_strategy'] != 'none']
+
+            if len(no_heuristic) > 0 and len(with_heuristic) > 0:
+                categories = ['Avg Cost', 'Avg Time', 'Avg Nodes']
+                no_heur_values = [
+                    no_heuristic['cost'].mean(),
+                    no_heuristic['time'].mean(),
+                    no_heuristic['nodes_explored'].mean()
+                ]
+                with_heur_values = [
+                    with_heuristic['cost'].mean(),
+                    with_heuristic['time'].mean(),
+                    with_heuristic['nodes_explored'].mean()
+                ]
+
+                x = np.arange(len(categories))
+                width = 0.35
+
+                bars1 = axes[1, 1].bar(x - width / 2, no_heur_values, width,
+                                       label=f'No Heuristics (n={len(no_heuristic)})', alpha=0.8)
+                bars2 = axes[1, 1].bar(x + width / 2, with_heur_values, width,
+                                       label=f'With Heuristics (n={len(with_heuristic)})', alpha=0.8)
+
+                axes[1, 1].set_xlabel('Performance Metrics')
+                axes[1, 1].set_ylabel('Average Value')
+                axes[1, 1].set_xticks(x)
+                axes[1, 1].set_xticklabels(categories)
+                axes[1, 1].legend()
+
+        # 5. Success rate by combination with problem size categories (Stacked bar chart)
+        axes[2, 0].set_title('Success Rate by Strategy: Small vs Large Problems', fontsize=12, fontweight='bold')
+
+        # Create size categories
+        df_with_size = df.copy()
+        df_with_size['problem_size'] = df_with_size['num_sets'].apply(
+            lambda x: 'Small (<2000 ATMs)' if x < 2000 else 'Large (≥2000 ATMs)')
+
+        # Calculate success rates for each combination and size category
+        success_by_size = df_with_size.groupby(['combination', 'problem_size']).agg({
+            'optimal': ['sum', 'count']
+        })
+        success_by_size.columns = ['successes', 'total']
+        success_by_size['success_rate'] = success_by_size['successes'] / success_by_size['total']
+        success_by_size = success_by_size.reset_index()
+
+        # Get top combinations by overall success rate
+        overall_success = df_with_size.groupby('combination')['optimal'].mean().sort_values(ascending=False)
+        top_10_combos = overall_success.head(10).index
+
+        # Filter data for top combinations
+        plot_data = success_by_size[success_by_size['combination'].isin(top_10_combos)]
+
+        # Pivot for stacked bar chart
+        pivot_data = plot_data.pivot(index='combination', columns='problem_size', values='success_rate').fillna(0)
+
+        # Reorder by overall success rate
+        pivot_data = pivot_data.reindex(top_10_combos)
+
+        # Create stacked bar chart
+        x_pos = range(len(pivot_data))
+        if 'Small (<2000 ATMs)' in pivot_data.columns and 'Large (≥2000 ATMs)' in pivot_data.columns:
+            bars1 = axes[2, 0].bar(x_pos, pivot_data['Small (<2000 ATMs)'],
+                                   label='Small Problems (<2000 ATMs)', alpha=0.8, color='lightblue')
+            bars2 = axes[2, 0].bar(x_pos, pivot_data['Large (≥2000 ATMs)'],
+                                   bottom=pivot_data['Small (<2000 ATMs)'],
+                                   label='Large Problems (≥2000 ATMs)', alpha=0.8, color='darkblue')
+        elif 'Small (<2000 ATMs)' in pivot_data.columns:
+            bars1 = axes[2, 0].bar(x_pos, pivot_data['Small (<2000 ATMs)'],
+                                   label='Small Problems (<2000 ATMs)', alpha=0.8, color='lightblue')
+        elif 'Large (≥2000 ATMs)' in pivot_data.columns:
+            bars2 = axes[2, 0].bar(x_pos, pivot_data['Large (≥2000 ATMs)'],
+                                   label='Large Problems (≥2000 ATMs)', alpha=0.8, color='darkblue')
+
+        axes[2, 0].set_xticks(x_pos)
+        axes[2, 0].set_xticklabels([combo.replace('_', '\n') for combo in pivot_data.index],
+                                   rotation=90, ha='right', fontsize=9)
         axes[2, 0].set_xlabel('Strategy Combination')
         axes[2, 0].set_ylabel('Success Rate')
-        axes[2, 0].set_ylim(0, 1)
+        axes[2, 0].set_ylim(0, 1.1)
+        axes[2, 0].legend()
+        axes[2, 0].grid(True, alpha=0.3, axis='y')
 
-        # 6. Performance improvement with heuristics
+        # 6. Time vs Nodes Explored (Search Efficiency)
+        axes[2, 1].set_title('Search Efficiency: Time vs Nodes Explored', fontsize=12, fontweight='bold')
         if len(successful_runs) > 0:
-            axes[2, 1].set_title('Performance: With vs Without Heuristics')
+            strategies = successful_runs['search_strategy'].unique()
+            colors = plt.cm.Set1(np.linspace(0, 1, len(strategies)))
 
-            # Compare none vs other heuristic strategies
-            none_data = successful_runs[successful_runs['heuristic_strategy'] == 'none']
-            heur_data = successful_runs[successful_runs['heuristic_strategy'] != 'none']
+            for strategy, color in zip(strategies, colors):
+                strategy_data = successful_runs[successful_runs['search_strategy'] == strategy]
+                axes[2, 1].scatter(strategy_data['time'], strategy_data['nodes_explored'],
+                                   alpha=0.7, label=strategy, c=[color], s=50)
 
-            categories = ['Average Cost', 'Average Time', 'Average Nodes/100']
-            none_values = [
-                none_data['cost'].mean() if len(none_data) > 0 else 0,
-                none_data['time'].mean() if len(none_data) > 0 else 0,
-                none_data['nodes_explored'].mean() / 100 if len(none_data) > 0 else 0
-            ]
-            heur_values = [
-                heur_data['cost'].mean() if len(heur_data) > 0 else 0,
-                heur_data['time'].mean() if len(heur_data) > 0 else 0,
-                heur_data['nodes_explored'].mean() / 100 if len(heur_data) > 0 else 0
-            ]
+        axes[2, 1].set_xlabel('Time (seconds)')
+        axes[2, 1].set_ylabel('Nodes Explored')
+        axes[2, 1].set_yscale('log')  # Log scale for nodes
+        axes[2, 1].legend(loc='lower right')
+        axes[2, 1].grid(True, alpha=0.3)
+
+        # 7. Problem Size Impact on Performance
+        axes[3, 0].set_title('Performance vs Problem Size (Number of ATMs)', fontsize=12, fontweight='bold')
+        if len(successful_runs) > 0:
+            # Create scatter plot: problem size vs time, colored by search strategy
+            strategies = successful_runs['search_strategy'].unique()
+            colors = plt.cm.Set1(np.linspace(0, 1, len(strategies)))
+
+            for strategy, color in zip(strategies, colors):
+                strategy_data = successful_runs[successful_runs['search_strategy'] == strategy]
+                axes[3, 0].scatter(strategy_data['num_sets'], strategy_data['time'],
+                                   alpha=0.7, label=strategy, c=[color], s=50)
+
+            axes[3, 0].set_xlabel('Number of ATMs (Sets)')
+            axes[3, 0].set_ylabel('Time (seconds)')
+            axes[3, 0].set_xscale('log')
+            axes[3, 0].set_yscale('log')
+            axes[3, 0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            axes[3, 0].grid(True, alpha=0.3)
+
+        # 8. Coverage Ratio Analysis
+        axes[3, 1].set_title('Performance by Coverage Ratio (Users per ATM)', fontsize=12, fontweight='bold')
+        if len(successful_runs) > 0:
+            # Calculate coverage ratio
+            successful_runs_copy = successful_runs.copy()
+            successful_runs_copy['coverage_ratio'] = successful_runs_copy['num_users'] / successful_runs_copy[
+                'num_sets']
+
+            # Create bins for coverage ratio
+            successful_runs_copy['ratio_category'] = pd.cut(successful_runs_copy['coverage_ratio'],
+                                                            bins=5,
+                                                            labels=['Very Low', 'Low', 'Medium', 'High', 'Very High'])
+
+            # Calculate average time by coverage ratio category and search strategy
+            ratio_time = successful_runs_copy.groupby(['ratio_category', 'search_strategy'])[
+                'time'].mean().reset_index()
+
+            # Create grouped bar chart
+            categories = ratio_time['ratio_category'].unique()
+            strategies = ratio_time['search_strategy'].unique()
 
             x = np.arange(len(categories))
-            width = 0.35
+            width = 0.15
 
-            axes[2, 1].bar(x - width / 2, none_values, width, label='No Heuristics', alpha=0.8)
-            axes[2, 1].bar(x + width / 2, heur_values, width, label='With Heuristics', alpha=0.8)
-            axes[2, 1].set_xlabel('Metrics')
-            axes[2, 1].set_ylabel('Average Value')
-            axes[2, 1].set_xticks(x)
-            axes[2, 1].set_xticklabels(categories)
-            axes[2, 1].legend()
+            for i, strategy in enumerate(strategies):
+                strategy_data = ratio_time[ratio_time['search_strategy'] == strategy]
+                # Align categories properly
+                values = []
+                for cat in categories:
+                    cat_data = strategy_data[strategy_data['ratio_category'] == cat]
+                    if len(cat_data) > 0:
+                        values.append(cat_data['time'].iloc[0])
+                    else:
+                        values.append(0)
+
+                axes[3, 1].bar(x + i * width, values, width, label=strategy, alpha=0.8)
+
+            axes[3, 1].set_xlabel('Coverage Ratio Category (Users/ATM)')
+            axes[3, 1].set_ylabel('Average Time (seconds)')
+            axes[3, 1].set_xticks(x + width * (len(strategies) - 1) / 2)
+            axes[3, 1].set_xticklabels(categories, rotation=0)
+            axes[3, 1].legend()
+            axes[3, 1].grid(True, alpha=0.3, axis='y')
 
         plt.tight_layout()
 
-        # Save visualization
+        # Print summary statistics
+        print("\n" + "=" * 60)
+        print("SUMMARY STATISTICS")
+        print("=" * 60)
+        print(f"Total runs: {len(df)}")
+        print(f"Successful runs: {len(successful_runs)} ({len(successful_runs) / len(df):.1%})")
+        print(f"Search strategies tested: {df['search_strategy'].nunique()}")
+        print(f"Heuristic strategies tested: {df['heuristic_strategy'].nunique()}")
+        print(f"Small problems (<2000 ATMs): {len(df[df['num_sets'] < 2000])}")
+        print(f"Large problems (≥2000 ATMs): {len(df[df['num_sets'] >= 2000])}")
+        print(f"Average users per problem: {df['num_users'].mean():.1f}")
+        print(f"Average ATMs per problem: {df['num_sets'].mean():.1f}")
+        print(f"Average coverage ratio (users/ATM): {(df['num_users'] / df['num_sets']).mean():.2f}")
+
+        if len(successful_runs) > 0:
+            print(
+                f"\nBest performing combination (lowest avg cost): {successful_runs.groupby('combination')['cost'].mean().idxmin()}")
+            print(
+                f"Fastest combination (lowest avg time): {successful_runs.groupby('combination')['time'].mean().idxmin()}")
+            print(
+                f"Most efficient nodes exploration: {successful_runs.groupby('combination')['nodes_explored'].mean().idxmin()}")
+
+        # Save visualization with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plot_filename = os.path.join(self.output_dir, f"enhanced_strategy_comparison_{timestamp}.png")
+        plot_filename = os.path.join(self.output_dir, f"bb_strategy_analysis_{timestamp}.png")
         plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
         plt.show()
 
-        print(f"Enhanced visualization saved to: {plot_filename}")
+        print(f"\nVisualization saved to: {plot_filename}")
+        print("=" * 60)
 
     def generate_enhanced_recommendations(self, df):
         """Generate enhanced recommendations based on comprehensive analysis"""
@@ -529,7 +683,7 @@ def main():
 
     # Run comprehensive analysis (If code is already executed comment the lower one and uncomment the second line)
     df = analyzer.run_comprehensive_analysis(runs_per_test=1, time_limit=120)
-    # df = pd.read_csv("enhanced_strategy_analysis_results/enhanced_strategy_results_20250528_180539.csv")
+    # df = pd.read_csv("enhanced_strategy_analysis_results/combined_results_2.csv")
 
     # Analyze results
     summary_stats, success_rates, heuristic_analysis = analyzer.analyze_results(df)

@@ -890,9 +890,9 @@ class AdaptiveManager:
 
         # Timing allocations (as fractions of total budget)
         self.phase_allocations = {
-            1: 0.15,  # Quick heuristic burst: 15%
-            2: 0.70,  # Main B&B with periodic improvements: 70%
-            3: 0.15  # Final intensification: 15%
+            1: 0.10,  # Quick heuristic burst: 10%
+            2: 0.80,  # Main B&B with periodic improvements: 80%
+            3: 0.10  # Final intensification: 10%
         }
 
     def get_phase_time_budget(self, phase: int) -> float:

@@ -1,0 +1,4 @@
+heuristic_strategy,heuristic_time,heuristic_calls,heuristic_improvements,heuristic_efficiency,cost,time
+advanced,1.573,0.07,0.015,0.003,inf,120.4346
+basic,0.8323,7.145,0.0,0.0,283.98,87.3765
+intermediate,154.4118,6.36,1.25,0.2195,274.3,190.3755
